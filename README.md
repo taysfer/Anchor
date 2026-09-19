@@ -204,15 +204,46 @@ Currently being built for a 36-hour hackathon.
 
 ### MVP Progress
 
-* [ ] Chrome extension
-* [ ] Set user intention
-* [ ] Extract webpage context
-* [ ] Compare webpage to intention
-* [ ] Track intent alignment
-* [ ] Detect drift
-* [ ] Intervention popup
-* [ ] Return to goal
-* [ ] Session summary
+* [x] Chrome extension
+* [x] Set user intention
+* [x] Extract webpage context
+* [x] Compare webpage to intention *(stub similarity, pending real embeddings)*
+* [x] Track intent alignment
+* [x] Detect drift
+* [x] Intervention popup
+* [x] Return to goal
+* [x] Session summary
+
+## Development
+
+This is a plain Manifest V3 extension, no build step required. Extension code lives in [extension/](extension/).
+
+1. Open `chrome://extensions`
+2. Enable **Developer mode**
+3. Click **Load unpacked** and select the `extension/` folder
+4. Click the Anchor icon, enter a goal, and start browsing
+
+### Structure
+
+* `extension/manifest.json` — MV3 manifest
+* `extension/shared.js` — constants, storage helpers, and the drift-score stub (loaded by all three contexts below)
+* `extension/background.js` — service worker; owns session state and the drift check on each page report
+* `extension/content.js` — injected on every page; extracts page context, tracks SPA navigation, renders the intervention modal
+* `extension/popup.html` / `popup.js` / `popup.css` — intention input, live session status, and the end-of-session summary
+
+### Integration point for drift logic
+
+`computeDriftScoreStub` in `shared.js` is a placeholder keyword-overlap scorer so the
+full session → tracking → intervention → summary pipeline works end-to-end today.
+Swap its body for a call to the real embeddings/similarity API — the signature
+(`goal, pageContext) -> Promise<number in [0, 1]>`) and `classifyScore` thresholds
+are the integration seam.
+
+### Planned: attention detection
+
+A follow-up feature will use the webcam (processed locally, nothing uploaded) to
+detect when the user looks away from the screen for an extended period, as a
+complement to the semantic drift signal above.
 
 ## Team
 
