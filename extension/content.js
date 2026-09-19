@@ -4,6 +4,7 @@
 (function anchorContentScript() {
   let lastUrl = location.href;
   let modalShown = false;
+  let toast = null; // the attention warning currently on screen, if any
 
   init();
 
@@ -14,6 +15,10 @@
     chrome.runtime.onMessage.addListener((message) => {
       if (message.type === MSG.SHOW_INTERVENTION) {
         showIntervention(message.payload);
+      } else if (message.type === MSG.SHOW_ATTENTION_WARNING) {
+        showAttentionWarning(message.payload);
+      } else if (message.type === MSG.HIDE_ATTENTION_WARNING) {
+        hideAttentionWarning(message.payload);
       }
     });
   }
@@ -107,11 +112,123 @@
     }
   }
 
+  // Small non-blocking banner shown when the webcam notices the user looking away.
+  function showAttentionWarning(payload) {
+    removeAttentionToast();
+
+    const host = document.createElement('div');
+    host.id = 'anchor-attention-host';
+    document.documentElement.appendChild(host);
+    const shadow = host.attachShadow({ mode: 'open' });
+
+    const style = document.createElement('style');
+    style.textContent = TOAST_CSS;
+    shadow.appendChild(style);
+
+    const card = document.createElement('div');
+    card.className = 'anchor-toast';
+    card.setAttribute('role', 'status');
+    card.innerHTML = `
+      <div class="anchor-toast__body">
+        <div class="anchor-toast__title">Still with us?</div>
+        <div class="anchor-toast__text">Looks like you looked away from the screen. You were working on: <strong>${escapeHtml(payload.goal)}</strong></div>
+      </div>
+      <button type="button" class="anchor-toast__close">Dismiss</button>
+    `;
+    shadow.appendChild(card);
+    card.querySelector('.anchor-toast__close').addEventListener('click', removeAttentionToast);
+
+    toast = { host, card, goal: payload.goal, hideTimer: null };
+  }
+
+  // With awayMs, swap to a short "welcome back" state (hiding it the instant the
+  // user looks back would mean they never see it); without, remove it now.
+  function hideAttentionWarning(payload) {
+    if (!toast) return;
+    const awayMs = payload && payload.awayMs;
+    if (awayMs == null) {
+      removeAttentionToast();
+      return;
+    }
+
+    toast.card.classList.add('anchor-toast--back');
+    toast.card.querySelector('.anchor-toast__title').textContent = 'Welcome back';
+    toast.card.querySelector('.anchor-toast__text').textContent =
+      `You were away for ${formatAway(awayMs)}. Back to: ${toast.goal}`;
+    clearTimeout(toast.hideTimer);
+    toast.hideTimer = setTimeout(removeAttentionToast, 4000);
+  }
+
+  function removeAttentionToast() {
+    if (!toast) return;
+    clearTimeout(toast.hideTimer);
+    toast.host.remove();
+    toast = null;
+  }
+
+  function formatAway(ms) {
+    const totalSec = Math.max(1, Math.round(ms / 1000));
+    if (totalSec < 60) return `${totalSec}s`;
+    return `${Math.floor(totalSec / 60)}m ${totalSec % 60}s`;
+  }
+
   function escapeHtml(str) {
     const div = document.createElement('div');
     div.textContent = str || '';
     return div.innerHTML;
   }
+
+  const TOAST_CSS = `
+    :host { all: initial; }
+    .anchor-toast {
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 2147483647;
+      width: min(440px, 92vw);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: #ffffff;
+      color: #14161a;
+      border: 1px solid #e4e6eb;
+      border-left: 4px solid #e0a90b;
+      border-radius: 10px;
+      padding: 12px 14px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      animation: anchor-toast-in 200ms ease-out;
+    }
+    .anchor-toast--back { border-left-color: #2fa860; }
+    .anchor-toast__body { flex: 1; min-width: 0; }
+    .anchor-toast__title {
+      font-size: 14px;
+      font-weight: 700;
+      margin-bottom: 2px;
+    }
+    .anchor-toast__text {
+      font-size: 12.5px;
+      color: #5b616b;
+      line-height: 1.4;
+    }
+    .anchor-toast__close {
+      flex-shrink: 0;
+      border: 1px solid #d7dbe0;
+      background: #ffffff;
+      color: #14161a;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .anchor-toast__close:hover { background: #f2f4f7; }
+    @keyframes anchor-toast-in {
+      from { opacity: 0; transform: translate(-50%, -8px); }
+      to { opacity: 1; transform: translate(-50%, 0); }
+    }
+  `;
 
   const MODAL_CSS = `
     :host { all: initial; }

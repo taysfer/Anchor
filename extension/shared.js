@@ -10,6 +10,23 @@ const MSG = {
   RETURN_TO_GOAL: 'RETURN_TO_GOAL',
   KEEP_BROWSING: 'KEEP_BROWSING',
   SESSION_UPDATED: 'SESSION_UPDATED',
+  SIMULATE_DRIFT: 'SIMULATE_DRIFT',
+
+  // Attention detection: popup -> background
+  SIMULATE_AWAY: 'SIMULATE_AWAY',
+  RECALIBRATE_ATTENTION: 'RECALIBRATE_ATTENTION',
+  // background -> offscreen document (sent with target: 'offscreen')
+  ATTENTION_START: 'ATTENTION_START',
+  ATTENTION_STOP: 'ATTENTION_STOP',
+  ATTENTION_RECALIBRATE: 'ATTENTION_RECALIBRATE',
+  // offscreen document -> background
+  ATTENTION_STATUS: 'ATTENTION_STATUS',
+  ATTENTION_STATE: 'ATTENTION_STATE',
+  ATTENTION_AWAY: 'ATTENTION_AWAY',
+  ATTENTION_RETURNED: 'ATTENTION_RETURNED',
+  // background -> content script
+  SHOW_ATTENTION_WARNING: 'SHOW_ATTENTION_WARNING',
+  HIDE_ATTENTION_WARNING: 'HIDE_ATTENTION_WARNING',
 };
 
 const DRIFT = {
@@ -19,6 +36,24 @@ const DRIFT = {
 };
 
 const STORAGE_KEY = 'anchor_session';
+const SETTINGS_KEY = 'anchor_settings';
+
+// Optional local Python attention server (see server/). Only an extension page
+// or the service worker talks to it; the address never leaves this machine.
+const PYTHON_ENGINE_WS_URL = 'ws://127.0.0.1:8765/attention/ws';
+const PYTHON_ENGINE_HEALTH_URL = 'http://127.0.0.1:8765/health';
+
+// Webcam attention detection tuning. Head direction is measured as the angle
+// between where the face points now and where it pointed during calibration
+// (the first couple of seconds of a session), so a webcam that sits below eye
+// level doesn't count as "looking away".
+const ATTENTION_CONFIG = {
+  awayThresholdMs: 5000, // looking away this long triggers the warning
+  angleThresholdDeg: 20, // head turned this far from the calibrated pose = away (tuned in analysis/)
+  calibrationMs: 2500, // how long to sample the "looking at the screen" pose
+  minCalibrationSamples: 3,
+  returnFrames: 2, // consecutive attentive readings needed to end an away episode
+};
 
 // How many consecutive HIGH-drift pages in a row before we interrupt the user.
 // This mirrors the README's point that a single unrelated page shouldn't trigger
@@ -100,6 +135,31 @@ function setSession(session) {
   });
 }
 
+function getSettings() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get([SETTINGS_KEY], (res) => {
+      resolve({ attentionEnabled: false, attentionEngine: 'browser', ...(res[SETTINGS_KEY] || {}) });
+    });
+  });
+}
+
+async function setSettings(patch) {
+  const next = { ...(await getSettings()), ...patch };
+  return new Promise((resolve) => {
+    chrome.storage.local.set({ [SETTINGS_KEY]: next }, () => resolve(next));
+  });
+}
+
+function summarizeAttention(attention) {
+  if (!attention || !attention.enabled) return null;
+  const closed = (attention.events || []).filter((e) => e.durationMs != null);
+  return {
+    awayCount: closed.length,
+    totalAwayMs: closed.reduce((sum, e) => sum + e.durationMs, 0),
+    longestAwayMs: closed.reduce((max, e) => Math.max(max, e.durationMs), 0),
+  };
+}
+
 function buildSummary(session) {
   const events = session.events || [];
   const counts = { LOW: 0, MEDIUM: 0, HIGH: 0 };
@@ -119,5 +179,6 @@ function buildSummary(session) {
     counts,
     avgScore,
     events,
+    attention: summarizeAttention(session.attention),
   };
 }
