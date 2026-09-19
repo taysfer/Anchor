@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 from app.models.schemas import AnalyzeRequest, AnalyzeResponse
+from app.services.alignment import calculate_alignment
 
 router = APIRouter()
 
@@ -7,10 +8,14 @@ router = APIRouter()
 @router.post("/analyze", response_model=AnalyzeResponse)
 def analyze_page(request: AnalyzeRequest):
 
-    # Temporary fake result
-    # Actual AI analysis will replace this later
+    score = calculate_alignment(
+        request.intention,
+        request.title,
+        request.content
+    )
+
     return AnalyzeResponse(
-        alignment=0.85,
-        state="aligned",
-        reason="Placeholder analysis"
+        alignment=score,
+        state="analyzed",
+        reason="Alignment calculated using semantic similarity."
     )
