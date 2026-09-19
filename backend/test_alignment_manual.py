@@ -1,8 +1,12 @@
 from app.services.alignment import calculate_alignment
 
 
+# Intention used to test whether relevant webpages
+# receive higher alignment scores than unrelated pages
 intention = "Find a laptop for programming"
 
+# Test pages range from directly related to unrelated
+# so we can compare how the embedding model scores them
 pages = [
     (
         "https://kubernetes.io/docs/concepts/services-networking/ingress/",
@@ -36,6 +40,7 @@ pages = [
 ]
 
 
+# Calculate and print an alignment score for every test page
 for url, title, content in pages:
 
     score = calculate_alignment(
