@@ -9,9 +9,10 @@ router = APIRouter()
 def analyze_page(request: AnalyzeRequest):
 
     score = calculate_alignment(
-        request.intention,
-        request.title,
-        request.content
+    request.intention,
+    request.url,
+    request.title,
+    request.content
     )
 
     return AnalyzeResponse(

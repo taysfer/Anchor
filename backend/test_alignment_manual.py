@@ -1,37 +1,46 @@
 from app.services.alignment import calculate_alignment
 
 
-intention = "Learn Kubernetes ingress"
-
+intention = "Find a laptop for programming"
 
 pages = [
     (
-        "Kubernetes Ingress Tutorial",
-        "Learn how Kubernetes ingress handles routing and services."
+        "https://kubernetes.io/docs/concepts/services-networking/ingress/",
+        "Ingress | Kubernetes",
+        "An API object that manages external access to services in a cluster, typically HTTP."
     ),
+
     (
-        "Docker Networking Guide",
-        "Learn how Docker containers communicate with each other."
+        "https://docs.docker.com/network/",
+        "Docker Networking",
+        "Learn about container networking, drivers, ports, and communication between containers."
     ),
+
     (
-        "Developer Desk Setup",
-        "Here are some productivity tools for your desk."
+        "https://aws.amazon.com/elasticloadbalancing/",
+        "Elastic Load Balancing",
+        "Automatically distribute incoming application traffic across multiple targets."
     ),
+
     (
-        "M4 MacBook Pro Review",
-        "A review of Apple's MacBook Pro performance."
+        "https://example.com/macbook",
+        "Best MacBook for Developers",
+        "Comparing MacBook Pro models for software development and programming."
     ),
+
     (
+        "https://example.com/minecraft",
         "Top 10 Minecraft Builds",
-        "Here are ten awesome Minecraft houses you can build."
+        "Here are ten Minecraft houses you should build in your survival world."
     )
 ]
 
 
-for title, content in pages:
+for url, title, content in pages:
 
     score = calculate_alignment(
         intention,
+        url,
         title,
         content
     )
