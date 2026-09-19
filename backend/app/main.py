@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from app.routes.analyze import router as analyze_router
 
 app = FastAPI(
     title="Anchor API",
@@ -20,3 +21,6 @@ def health():
     return {
         "status": "ok"
     }
+
+
+app.include_router(analyze_router)
