@@ -14,19 +14,38 @@ chrome.runtime.sendMessage({ type: MSG.GET_SESSION }, (session) => {
 
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type !== MSG.HIDE_ATTENTION_WARNING) return;
+
   const awayMs = message.payload && message.payload.awayMs;
+
+  // If we don't have a valid away time, leave the warning open.
+  // The user must dismiss it manually.
   if (awayMs == null) {
-    closeWindow();
     return;
   }
-  // The user is back: say so briefly before closing, so they see it.
+
+  // Stop the timer because the user has returned.
   clearInterval(timerId);
+  timerId = null;
+
+  // Stop repeating the chime.
   clearInterval(chimeId);
+  chimeId = null;
+
+  // Change the warning to its returned state.
   document.getElementById('warning').classList.add('warning--back');
-  document.getElementById('warning-title').textContent = 'Welcome back';
-  document.getElementById('warning-text').textContent = 'Glad you’re back to it.';
-  timerEl.textContent = `You were away for ${formatAway(awayMs)}`;
-  setTimeout(closeWindow, 3000);
+
+  document.getElementById('warning-title').textContent =
+    'Welcome back';
+
+  document.getElementById('warning-text').textContent =
+    'Glad you’re back to it.';
+
+  // Keep their final inactive time visible.
+  timerEl.textContent =
+    `You were away for ${formatAway(awayMs)}`;
+
+  // Do NOT close the window here.
+  // The user must click the dismiss button.
 });
 
 function tick() {

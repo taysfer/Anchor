@@ -1,4 +1,3 @@
-# DoomEye
 # Anchor
 
 Anchor is a browser extension that helps people stay aware of why they went online in the first place.

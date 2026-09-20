@@ -495,17 +495,29 @@ async function showAttentionWarning(goal, since) {
 // awayMs = null removes the warning immediately; otherwise it briefly shows a
 // "welcome back" state first so the user actually sees it after looking back.
 async function dismissAttentionWarning(awayMs) {
-  if (awayMs == null) {
-    closeAwayWindows();
-  } else {
-    chrome.runtime.sendMessage({ type: MSG.HIDE_ATTENTION_WARNING, payload: { awayMs } }, () => void chrome.runtime.lastError);
-    closeAwayTimer = setTimeout(closeAwayWindows, 6000); // in case the window doesn't close itself
+  // Tell the warning that the user has returned,
+  // but do NOT automatically close it.
+  if (awayMs != null) {
+    chrome.runtime.sendMessage(
+      {
+        type: MSG.HIDE_ATTENTION_WARNING,
+        payload: { awayMs }
+      },
+      () => void chrome.runtime.lastError
+    );
   }
 
   const tabId = attentionWarningTabId ?? (await warningTabId());
-  attentionWarningTabId = null;
+
   if (tabId == null) return;
-  sendToTab(tabId, { type: MSG.HIDE_ATTENTION_WARNING, payload: { awayMs } });
+
+  sendToTab(tabId, {
+    type: MSG.HIDE_ATTENTION_WARNING,
+    payload: { awayMs }
+  });
+
+  // Do not close the warning here.
+  // The user must dismiss it manually.
 }
 
 // The offscreen document (and camera) does not survive a browser restart or an

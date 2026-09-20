@@ -161,20 +161,33 @@
   // user looks back would mean they never see it); without, remove it now.
   function hideAttentionWarning(payload) {
     if (!toast) return;
+
     const awayMs = payload && payload.awayMs;
+
+    // Do not automatically remove the warning.
+    // The user must manually dismiss it.
     if (awayMs == null) {
-      removeAttentionToast();
       return;
     }
 
+    // User has looked back, so stop counting their away time.
     clearInterval(toast.timerId);
+    toast.timerId = null;
+
+    // Stop the repeating chime.
     clearInterval(toast.chimeId);
+    toast.chimeId = null;
+
+    // Change the warning to the returned state.
     toast.card.classList.add('anchor-toast--back');
-    toast.card.querySelector('.anchor-toast__title').textContent = 'Welcome back';
+
+    toast.card.querySelector('.anchor-toast__title').textContent =
+      'Welcome back';
+
     toast.card.querySelector('.anchor-toast__text').textContent =
       `You were away for ${formatAway(awayMs)}. Back to: ${toast.goal}`;
-    clearTimeout(toast.hideTimer);
-    toast.hideTimer = setTimeout(removeAttentionToast, 4000);
+
+    // Keep the warning visible until the user clicks the button.
   }
 
   function removeAttentionToast() {
@@ -382,3 +395,55 @@
     }
   `;
 })();
+
+function showDoomEyeWarning(goal) {
+    // Don't create multiple warnings
+    if (document.getElementById("doomeye-warning")) {
+        return;
+    }
+
+    const warning = document.createElement("div");
+
+    warning.id = "doomeye-warning";
+    warning.className = "warning";
+
+    warning.innerHTML = `
+        <div class="warning__title">
+            Still with us?
+        </div>
+
+        <div class="warning__text">
+            Your recent browsing has moved away from your intention.
+        </div>
+
+        <div class="warning__goal">
+            <span class="warning__goal-label">
+                Your intention
+            </span>
+
+            ${escapeHtml(goal)}
+        </div>
+
+        <button
+            class="warning__button"
+            id="doomeye-return"
+        >
+            Return to Goal
+        </button>
+
+        <button
+            class="warning__button"
+            id="doomeye-continue"
+        >
+            Keep Exploring
+        </button>
+    `;
+
+    document.documentElement.appendChild(warning);
+
+    document
+        .getElementById("doomeye-continue")
+        .addEventListener("click", () => {
+            warning.remove();
+        });
+}
