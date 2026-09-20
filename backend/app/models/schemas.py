@@ -13,4 +13,5 @@ class AnalyzeRequest(BaseModel):
 class AnalyzeResponse(BaseModel):
     alignment: float
     state: str
+    intervention: bool
     reason: str
