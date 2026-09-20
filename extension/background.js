@@ -123,7 +123,7 @@ async function handlePageContext(pageContext, sender) {
   const current = await getSession();
   if (!current || !current.active) return null;
 
-  const { score, source } = await scorePage(current.goal, pageContext);
+  const { score, source } = await scorePage(current.goal, pageContext, current.id);
   const classification = classifyScore(score);
 
   const event = {

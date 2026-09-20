@@ -82,12 +82,13 @@ function normalizeSemanticScore(cosine) {
  * when it is reachable and falls back to local keyword matching when it is not,
  * so a session never stops working because the server isn't running.
  */
-async function scorePage(goal, pageContext) {
+async function scorePage(goal, pageContext, sessionId) {
   try {
     const response = await fetch(API_ANALYZE_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        session_id: sessionId, // the backend groups pages into a session by this id
         intention: goal,
         url: pageContext.url,
         title: pageContext.title,
