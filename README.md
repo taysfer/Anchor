@@ -204,15 +204,107 @@ Currently being built for a 36-hour hackathon.
 
 ### MVP Progress
 
-* [ ] Chrome extension
-* [ ] Set user intention
-* [ ] Extract webpage context
-* [ ] Compare webpage to intention
-* [ ] Track intent alignment
-* [ ] Detect drift
-* [ ] Intervention popup
-* [ ] Return to goal
-* [ ] Session summary
+* [x] Chrome extension
+* [x] Set user intention
+* [x] Extract webpage context
+* [x] Compare webpage to intention *(stub similarity, pending real embeddings)*
+* [x] Track intent alignment
+* [x] Detect drift
+* [x] Intervention popup
+* [x] Return to goal
+* [x] Session summary
+
+## Development
+
+This is a plain Manifest V3 extension, no build step required. Extension code lives in [extension/](extension/).
+
+1. Open `chrome://extensions`
+2. Enable **Developer mode**
+3. Click **Load unpacked** and select the `extension/` folder
+4. Click the Anchor icon, enter a goal, and start browsing
+
+### Structure
+
+```text
+extension/                 Chrome extension (load this folder unpacked)
+  manifest.json
+  shared.js                constants, storage helpers, drift-score stub
+  background.js            service worker: session state, drift check, attention events
+  content.js               page context, SPA navigation, intervention modal, attention warning
+  popup/                   intention input, live status, session summary
+  attention/               webcam attention detection (offscreen document, state machine, permission page, Python-server client)
+  vendor/mediapipe/        bundled MediaPipe Face Landmarker (v0.10.21) and model, run fully on-device
+  tests/                   attention state machine tests
+server/                    Python: optional gaze-tracking attention server (built); embeddings / drift API (planned)
+analysis/                  Python: record labelled sessions, tune attention thresholds, plots and report
+```
+
+When opened as a tab for testing, the popup is at `chrome-extension://<id>/popup/popup.html`.
+
+### Integration point for drift logic
+
+`computeDriftScoreStub` in `extension/shared.js` is a placeholder keyword-overlap scorer so the
+full session → tracking → intervention → summary pipeline works end-to-end today.
+Swap its body for a call to the real embeddings/similarity API — the signature
+(`goal, pageContext) -> Promise<number in [0, 1]>`) and `classifyScore` thresholds
+are the integration seam.
+
+### Attention detection
+
+Opt-in from the start screen ("Watch for looking away"). Video is analysed on-device
+and is never stored or uploaded. Head direction is the angle between where the face
+points now and where it pointed during a 2.5s calibration at session start. If the face
+is gone or turned more than 20° for 5s, a large pop-up window (about 70% of your screen: "Still with us?", your goal,
+and a live away timer on a slowly pulsing red background, with a chime that repeats until you
+look back) opens in front of everything, whichever tab is active.
+A banner also appears on your web page (or the last one you were on), and the popup tab
+turns red. When you look back the pop-up says welcome back and closes itself; "I'm back"
+dismisses it early. Only
+timings ("looked away for 12s") are saved for the session summary. Tunables live in
+`ATTENTION_CONFIG` in `extension/shared.js`.
+
+There are two interchangeable engines, chosen in the popup:
+
+* **In browser** (default, no install): an offscreen document runs MediaPipe Face
+  Landmarker (WASM) and tracks head direction. Camera permission is granted once from a
+  visible tab (**Grant camera access** in the popup), since offscreen documents cannot
+  show permission prompts.
+* **Python server**: `server/` runs the same detection locally and adds eye gaze
+  (iris position, blink handling), modeled on
+  [GazeTracking](https://github.com/antoinelame/GazeTracking). It opens the camera
+  itself and streams events to the extension over a localhost WebSocket. See
+  [server/README.md](server/README.md).
+
+The active session view has **Simulate look-away** and **Recalibrate** links for
+demoing without a camera. Tests: `python -m pytest` in `server/`, and for the browser
+engine's state machine open `chrome-extension://<id>/tests/attention-core.test.html`
+(the tab title shows PASS/FAIL).
+
+### Testing
+
+Automated (no camera needed):
+
+```powershell
+cd server
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements-dev.txt
+python -m pytest                       # attention server, tracker, recorder
+cd ..\analysis
+pip install -r requirements.txt
+python -m pytest                       # tuning and evaluation code
+```
+
+For the browser engine's state machine, open `chrome-extension://<id>/tests/attention-core.test.html` (the tab title shows PASS/FAIL).
+
+By hand, in Chrome:
+
+1. Reload Anchor in `chrome://extensions`, then refresh any web page you want to test on (pages opened before the reload don't have the extension's script).
+2. Open the popup (`chrome-extension://<id>/popup/popup.html`), turn on **Watch for looking away**, and start a session.
+3. No camera: click **Simulate look-away** to see the warning appear on your last web page, and **Simulate drift** twice to see the "Still what you came here for?" prompt.
+4. Browser engine: click **Grant camera access** once and choose *Allow*. The popup goes Starting camera, Calibrating, then Focused. Look away or leave the frame for over 5 seconds and the warning appears on your page; look back and it says welcome back.
+5. Python engine: start the server (see [server/README.md](server/README.md)), choose **Python server** in the popup, and repeat step 4.
+6. See the tracking live: `python -m anchor_attention.preview` (from `server/`) opens your camera with the face, irises, head direction, gaze bars and away timer drawn on top.
 
 ## Team
 
