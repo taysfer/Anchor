@@ -1,7 +1,7 @@
-// Service worker: owns session state, runs the (stubbed) drift check on each
+// Service worker: owns session state, runs the drift check (scored by backend/) on each
 // page context report, decides when to trigger an intervention, and manages
 // the webcam attention monitor (which lives in an offscreen document).
-importScripts('shared.js', 'attention/python-engine.js');
+importScripts('shared.js');
 
 let interventionCooldownUntil = 0;
 let offscreenCreating = null;
@@ -41,7 +41,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function handleMessage(message, sender) {
   switch (message.type) {
     case MSG.START_SESSION:
-      return startSession(message.goal, message.attentionEnabled, message.attentionEngine);
+      return startSession(message.goal, message.attentionEnabled);
     case MSG.END_SESSION:
       return endSession();
     case MSG.GET_SESSION:
@@ -71,12 +71,11 @@ async function handleMessage(message, sender) {
   }
 }
 
-async function startSession(goal, attentionEnabled, attentionEngine) {
+async function startSession(goal, attentionEnabled) {
   await stopAttentionMonitor();
   closeAwayWindows();
 
   const enabled = !!attentionEnabled;
-  const engine = attentionEngine === 'python' ? 'python' : 'browser';
   const session = {
     id: generateId(),
     goal: (goal || '').trim(),
@@ -88,7 +87,6 @@ async function startSession(goal, attentionEnabled, attentionEngine) {
     consecutiveHigh: 0,
     attention: {
       enabled,
-      engine, // 'browser' (offscreen document) or 'python' (local server)
       status: enabled ? 'starting' : 'off', // camera pipeline: off | starting | active | error
       state: null, // user: calibrating | attentive | away
       error: null,
@@ -98,7 +96,7 @@ async function startSession(goal, attentionEnabled, attentionEngine) {
   interventionCooldownUntil = 0;
   await enqueue(() => setSession(session));
 
-  if (enabled) startAttentionMonitor(engine);
+  if (enabled) startAttentionMonitor();
   return session;
 }
 
@@ -125,7 +123,7 @@ async function handlePageContext(pageContext, sender) {
   const current = await getSession();
   if (!current || !current.active) return null;
 
-  const score = await computeDriftScoreStub(current.goal, pageContext);
+  const { score, source } = await scorePage(current.goal, pageContext);
   const classification = classifyScore(score);
 
   const event = {
@@ -133,6 +131,7 @@ async function handlePageContext(pageContext, sender) {
     url: pageContext.url,
     title: pageContext.title,
     score,
+    source, // 'semantic' (backend) or 'keyword' (in-browser fallback)
     classification,
   };
 
@@ -295,52 +294,7 @@ async function sendToOffscreen(message, attempts = 10) {
   return null;
 }
 
-// chrome.storage.session outlives a service worker restart but is cleared when
-// the browser restarts, so it tells "the worker was recycled mid-session"
-// (reconnect) apart from "the browser was restarted" (leave the camera off).
-const PYTHON_ENGINE_FLAG = 'anchor_python_engine_running';
-
-function setPythonEngineFlag(running) {
-  return chrome.storage.session.set({ [PYTHON_ENGINE_FLAG]: running });
-}
-
-async function resumePythonMonitorIfRecycled() {
-  const flag = (await chrome.storage.session.get(PYTHON_ENGINE_FLAG))[PYTHON_ENGINE_FLAG];
-  if (!flag || PythonEngine.isActive()) return;
-  const session = await getSession();
-  if (session && attentionActive(session) && session.attention.engine === 'python') {
-    startPythonMonitor();
-  }
-}
-
-resumePythonMonitorIfRecycled();
-
-// Events from the Python server use the same shapes the handlers below expect.
-function startPythonMonitor() {
-  setPythonEngineFlag(true);
-  PythonEngine.start(ATTENTION_CONFIG, {
-    onEvent: (message) => {
-      switch (message.type) {
-        case 'status':
-          return handleAttentionStatus(message);
-        case 'state':
-          return handleAttentionState(message);
-        case 'away':
-          return handleAttentionAway(message);
-        case 'returned':
-          return handleAttentionReturned(message);
-      }
-    },
-    onFailure: (error) => handleAttentionStatus({ status: 'error', error }),
-  });
-}
-
-async function startAttentionMonitor(engine) {
-  if (engine === 'python') {
-    startPythonMonitor();
-    return;
-  }
-
+async function startAttentionMonitor() {
   try {
     await ensureOffscreenDocument();
     const response = await sendToOffscreen({ type: MSG.ATTENTION_START, config: ATTENTION_CONFIG });
@@ -352,8 +306,6 @@ async function startAttentionMonitor(engine) {
 }
 
 async function stopAttentionMonitor() {
-  PythonEngine.stop();
-  await setPythonEngineFlag(false);
   try {
     const contexts = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] });
     if (contexts.length === 0) return;
@@ -365,7 +317,6 @@ async function stopAttentionMonitor() {
 }
 
 async function recalibrateAttention() {
-  if (PythonEngine.isActive()) return PythonEngine.recalibrate();
   const response = await sendToOffscreen({ type: MSG.ATTENTION_RECALIBRATE }, 1);
   return !!response;
 }
@@ -489,6 +440,10 @@ async function openAwayWindow(since) {
     // Centre it over the browser window it will appear in front of, if we can tell where that is.
     let position = {};
     const current = await chrome.windows.getLastFocused();
+    // On macOS, a full-screen window is its own Space, and focusing a new window
+    // switches away from it (or drops the browser out of full screen). Leave a
+    // full-screen browser alone: the in-page banner still shows over the page.
+    if (current.state === 'fullscreen') return;
     if (current.state !== 'minimized' && current.left != null && current.width != null) {
       position = {
         left: Math.max(0, Math.round(current.left + (current.width - WARNING_WINDOW.width) / 2)),

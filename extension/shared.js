@@ -38,11 +38,6 @@ const DRIFT = {
 const STORAGE_KEY = 'anchor_session';
 const SETTINGS_KEY = 'anchor_settings';
 
-// Optional local Python attention server (see server/). Only an extension page
-// or the service worker talks to it; the address never leaves this machine.
-const PYTHON_ENGINE_WS_URL = 'ws://127.0.0.1:8765/attention/ws';
-const PYTHON_ENGINE_HEALTH_URL = 'http://127.0.0.1:8765/health';
-
 // Webcam attention detection tuning. Head direction is measured as the angle
 // between where the face points now and where it pointed during calibration
 // (the first couple of seconds of a session), so a webcam that sits below eye
@@ -63,21 +58,58 @@ const CONSECUTIVE_HIGH_DRIFT_THRESHOLD = 2;
 // Minimum time between intervention popups so we don't spam the user.
 const INTERVENTION_COOLDOWN_MS = 60_000;
 
+// Semantic alignment API (backend/). The service worker and extension pages can
+// call it because manifest host_permissions covers it, so no CORS setup is needed.
+const API_BASE_URL = 'http://127.0.0.1:8000';
+const API_ANALYZE_URL = `${API_BASE_URL}/analyze`;
+const API_HEALTH_URL = `${API_BASE_URL}/health`;
+const API_TIMEOUT_MS = 5000;
+
+// The backend returns raw cosine similarity between the goal and the page. With
+// all-MiniLM-L6-v2, on-topic pages score about 0.5-0.8, adjacent topics about
+// 0.3, and unrelated pages 0.0-0.15. Rescale that onto the 0-1 range that
+// classifyScore expects (0.05 -> 0%, 0.55 -> 100%).
+const SEMANTIC_FLOOR = 0.05;
+const SEMANTIC_SPAN = 0.5;
+
+function normalizeSemanticScore(cosine) {
+  return Math.max(0, Math.min(1, (cosine - SEMANTIC_FLOOR) / SEMANTIC_SPAN));
+}
+
 /**
- * NOTE for Person 2 (AI / Drift Logic):
- * This is a placeholder for the real embedding + semantic similarity pipeline.
- * It exists so the rest of the extension (session tracking, intervention UI,
- * summary) can be built and demoed before the real backend is ready.
- *
- * Replace the body of this function with a call to your API, e.g.:
- *   const res = await fetch(`${API_BASE}/drift`, { method: 'POST', body: JSON.stringify({ goal, pageContext }) });
- *   const { score } = await res.json();
- *   return score;
- *
- * Keep the signature (goal, pageContext) -> Promise<number in [0, 1]> so nothing
- * else has to change.
+ * Score how well a page matches the user's goal.
+ * Returns { score in [0, 1], source: 'semantic' | 'keyword' }. Uses the backend
+ * when it is reachable and falls back to local keyword matching when it is not,
+ * so a session never stops working because the server isn't running.
  */
-async function computeDriftScoreStub(goal, pageContext) {
+async function scorePage(goal, pageContext) {
+  try {
+    const response = await fetch(API_ANALYZE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        intention: goal,
+        url: pageContext.url,
+        title: pageContext.title,
+        content: [pageContext.description, pageContext.text].filter(Boolean).join('\n'),
+      }),
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    });
+    if (!response.ok) throw new Error(`analyze failed: ${response.status}`);
+    const { alignment } = await response.json();
+    if (typeof alignment !== 'number' || Number.isNaN(alignment)) throw new Error('bad alignment');
+    return { score: normalizeSemanticScore(alignment), source: 'semantic' };
+  } catch {
+    return { score: await computeKeywordScore(goal, pageContext), source: 'keyword' };
+  }
+}
+
+/**
+ * In-browser fallback for scorePage: keyword overlap between the goal and the
+ * page. Crude, but it needs no server, so session tracking, interventions and
+ * the summary keep working when the backend is not running.
+ */
+async function computeKeywordScore(goal, pageContext) {
   const goalWords = tokenize(goal);
   const pageWords = tokenize(`${pageContext.title} ${pageContext.description} ${pageContext.text}`);
 
@@ -90,7 +122,7 @@ async function computeDriftScoreStub(goal, pageContext) {
 
   const rawScore = overlap / goalWords.size;
   // Blend with a mild baseline so completely-unrelated-but-not-junk pages don't
-  // instantly bottom out at 0, which would make the stub feel too jumpy in demos.
+  // instantly bottom out at 0, which would make the fallback feel too jumpy.
   return Math.max(0, Math.min(1, rawScore * 0.85 + 0.1));
 }
 
@@ -109,10 +141,7 @@ function tokenize(str) {
   );
 }
 
-/**
- * NOTE for Person 2: replace these thresholds once real similarity scores are
- * tuned against the demo path. Higher score = more aligned with the goal.
- */
+/** Higher score = more aligned with the goal. Applies to both scoring sources. */
 function classifyScore(score) {
   if (score >= 0.6) return DRIFT.LOW;
   if (score >= 0.35) return DRIFT.MEDIUM;
@@ -138,7 +167,7 @@ function setSession(session) {
 function getSettings() {
   return new Promise((resolve) => {
     chrome.storage.local.get([SETTINGS_KEY], (res) => {
-      resolve({ attentionEnabled: false, attentionEngine: 'browser', ...(res[SETTINGS_KEY] || {}) });
+      resolve({ attentionEnabled: false, ...(res[SETTINGS_KEY] || {}) });
     });
   });
 }
@@ -166,9 +195,6 @@ function buildSummary(session) {
   events.forEach((e) => {
     counts[e.classification] = (counts[e.classification] || 0) + 1;
   });
-  const avgScore = events.length
-    ? events.reduce((sum, e) => sum + e.score, 0) / events.length
-    : null;
 
   return {
     goal: session.goal,
@@ -177,7 +203,6 @@ function buildSummary(session) {
     durationMs: (session.endedAt || Date.now()) - session.startedAt,
     totalPages: events.length,
     counts,
-    avgScore,
     events,
     attention: summarizeAttention(session.attention),
   };

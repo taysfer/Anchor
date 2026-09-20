@@ -207,7 +207,7 @@ Currently being built for a 36-hour hackathon.
 * [x] Chrome extension
 * [x] Set user intention
 * [x] Extract webpage context
-* [x] Compare webpage to intention *(stub similarity, pending real embeddings)*
+* [x] Compare webpage to intention *(semantic similarity via `backend/`, in-browser keyword fallback when it isn't running)*
 * [x] Track intent alignment
 * [x] Detect drift
 * [x] Intervention popup
@@ -228,26 +228,44 @@ This is a plain Manifest V3 extension, no build step required. Extension code li
 ```text
 extension/                 Chrome extension (load this folder unpacked)
   manifest.json
-  shared.js                constants, storage helpers, drift-score stub
+  shared.js                constants, storage helpers, backend scoring client and keyword fallback
   background.js            service worker: session state, drift check, attention events
   content.js               page context, SPA navigation, intervention modal, attention warning
   popup/                   intention input, live status, session summary
-  attention/               webcam attention detection (offscreen document, state machine, permission page, Python-server client)
+  attention/               webcam attention detection (offscreen document, state machine, permission page)
   vendor/mediapipe/        bundled MediaPipe Face Landmarker (v0.10.21) and model, run fully on-device
   tests/                   attention state machine tests
-server/                    Python: optional gaze-tracking attention server (built); embeddings / drift API (planned)
+backend/                   Python (FastAPI): semantic alignment API, POST /analyze on port 8000
+server/                    Python: standalone gaze-tracking attention server (not used by the extension)
 analysis/                  Python: record labelled sessions, tune attention thresholds, plots and report
 ```
 
 When opened as a tab for testing, the popup is at `chrome-extension://<id>/popup/popup.html`.
 
-### Integration point for drift logic
+### Semantic alignment (backend/)
 
-`computeDriftScoreStub` in `extension/shared.js` is a placeholder keyword-overlap scorer so the
-full session → tracking → intervention → summary pipeline works end-to-end today.
-Swap its body for a call to the real embeddings/similarity API — the signature
-(`goal, pageContext) -> Promise<number in [0, 1]>`) and `classifyScore` thresholds
-are the integration seam.
+Each page is scored by the alignment API in [backend/](backend/): the extension posts the goal
+and the page's URL, title and text to `POST /analyze`, which returns the cosine similarity from
+`all-MiniLM-L6-v2`. `scorePage` in `extension/shared.js` rescales that onto the 0-1 range that
+`classifyScore` expects (raw scores are roughly 0.5-0.8 on topic, ~0.3 for adjacent topics and
+under 0.15 for unrelated pages; the mapping is `SEMANTIC_FLOOR` / `SEMANTIC_SPAN`).
+
+The backend is optional: if it isn't running, `scorePage` falls back to a crude in-browser
+keyword matcher (`computeKeywordScore`), so a session always works with nothing installed. The
+popup header shows **Semantic matching** (backend reachable) or **Keyword matching** (fallback),
+and each saved event records which one scored it. Run the backend for noticeably better accuracy.
+
+```powershell
+cd backend
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+The first start downloads the embedding model. The extension reaches it through its
+`host_permissions`, so no CORS setup is needed; change `API_BASE_URL` in `extension/shared.js`
+to point somewhere else.
 
 ### Attention detection
 
@@ -263,21 +281,12 @@ dismisses it early. Only
 timings ("looked away for 12s") are saved for the session summary. Tunables live in
 `ATTENTION_CONFIG` in `extension/shared.js`.
 
-There are two interchangeable engines, chosen in the popup:
-
-* **In browser** (default, no install): an offscreen document runs MediaPipe Face
-  Landmarker (WASM) and tracks head direction. Camera permission is granted once from a
-  visible tab (**Grant camera access** in the popup), since offscreen documents cannot
-  show permission prompts.
-* **Python server**: `server/` runs the same detection locally and adds eye gaze
-  (iris position, blink handling), modeled on
-  [GazeTracking](https://github.com/antoinelame/GazeTracking). It opens the camera
-  itself and streams events to the extension over a localhost WebSocket. See
-  [server/README.md](server/README.md).
+Detection runs in the browser: an offscreen document runs MediaPipe Face Landmarker (WASM)
+and tracks head direction. Camera permission is granted once from a visible tab (**Grant camera
+access** in the popup), since offscreen documents cannot show permission prompts.
 
 The active session view has **Simulate look-away** and **Recalibrate** links for
-demoing without a camera. Tests: `python -m pytest` in `server/`, and for the browser
-engine's state machine open `chrome-extension://<id>/tests/attention-core.test.html`
+demoing without a camera. To test the state machine, open `chrome-extension://<id>/tests/attention-core.test.html`
 (the tab title shows PASS/FAIL).
 
 ### Testing
@@ -302,9 +311,8 @@ By hand, in Chrome:
 1. Reload Anchor in `chrome://extensions`, then refresh any web page you want to test on (pages opened before the reload don't have the extension's script).
 2. Open the popup (`chrome-extension://<id>/popup/popup.html`), turn on **Watch for looking away**, and start a session.
 3. No camera: click **Simulate look-away** to see the warning appear on your last web page, and **Simulate drift** twice to see the "Still what you came here for?" prompt.
-4. Browser engine: click **Grant camera access** once and choose *Allow*. The popup goes Starting camera, Calibrating, then Focused. Look away or leave the frame for over 5 seconds and the warning appears on your page; look back and it says welcome back.
-5. Python engine: start the server (see [server/README.md](server/README.md)), choose **Python server** in the popup, and repeat step 4.
-6. See the tracking live: `python -m anchor_attention.preview` (from `server/`) opens your camera with the face, irises, head direction, gaze bars and away timer drawn on top.
+4. Click **Grant camera access** once and choose *Allow*. The popup goes Starting camera, Calibrating, then Focused. Look away or leave the frame for over 5 seconds and the warning appears on your page; look back and it says welcome back.
+5. See the tracking live: `python -m anchor_attention.preview` (from `server/`) opens your camera with the face, irises, head direction, gaze bars and away timer drawn on top.
 
 ## Team
 

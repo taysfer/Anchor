@@ -10,6 +10,10 @@
       <header class="app__header">
         <span class="app__logo">&#9875;</span>
         <span class="app__name">Anchor</span>
+        <span class="backend-status" id="backend-status" title="Checking the alignment server&hellip;">
+          <span class="attention-dot" id="backend-dot"></span>
+          <span id="backend-text">Checking&hellip;</span>
+        </span>
       </header>
 
       <section id="view-start" class="view">
@@ -25,16 +29,6 @@
           <div class="option__help">
             Uses your webcam to notice when you look away from the screen for a few seconds.
             Video stays on your device and is never stored or uploaded.
-          </div>
-          <div class="option__engine" id="engine-options" hidden>
-            <label class="option__choice">
-              <input type="radio" name="attention-engine" value="browser" checked />
-              <span>In browser <span class="option__note">no install; head direction</span></span>
-            </label>
-            <label class="option__choice">
-              <input type="radio" name="attention-engine" value="python" />
-              <span>Python server <span class="option__note">adds eye gaze; run <code>server/</code> locally</span></span>
-            </label>
           </div>
           <div class="option__camera" id="camera-status" hidden>
             <span id="camera-status-text"></span>

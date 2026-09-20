@@ -64,6 +64,15 @@ body.standalone .app {
   font-weight: 700;
 }
 
+.backend-status {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
 .field-label {
   display: block;
   font-size: 12px;
@@ -152,35 +161,6 @@ textarea:focus {
   color: var(--muted);
   margin-top: 4px;
 }
-
-.option__engine {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
-}
-
-.option__choice {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.option__choice input { margin-top: 2px; }
-
-.option__note {
-  display: block;
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--muted);
-}
-
-.option__note code { font-size: 10.5px; }
 
 .option__camera {
   display: flex;
@@ -392,7 +372,7 @@ textarea:focus {
 
 .summary__stats {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 6px;
   margin-bottom: 14px;
 }

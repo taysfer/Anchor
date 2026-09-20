@@ -13,14 +13,8 @@ const ATTENTION_ERROR_TEXT = {
   'camera-lost': 'Camera disconnected',
   'model-load-failed': 'Attention model failed to load',
   'detection-failed': 'Attention detection stopped',
-  'server-unreachable': 'Python server not running',
   'bad-config': 'Attention settings were rejected',
 };
-
-function selectedEngine() {
-  const checked = document.querySelector('input[name="attention-engine"]:checked');
-  return checked ? checked.value : 'browser';
-}
 
 let tickTimer = null;
 
@@ -67,19 +61,12 @@ async function init() {
 
   const settings = await getSettings();
   attentionToggle.checked = settings.attentionEnabled;
-  const savedEngine = document.querySelector(`input[name="attention-engine"][value="${settings.attentionEngine}"]`);
-  if (savedEngine) savedEngine.checked = true;
   attentionToggle.addEventListener('change', async () => {
     await setSettings({ attentionEnabled: attentionToggle.checked });
     refreshCameraStatus();
   });
-  document.querySelectorAll('input[name="attention-engine"]').forEach((radio) => {
-    radio.addEventListener('change', async () => {
-      await setSettings({ attentionEngine: selectedEngine() });
-      refreshCameraStatus();
-    });
-  });
   refreshCameraStatus();
+  refreshBackendStatus();
 
   document.getElementById('goal-input').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -105,6 +92,7 @@ function renderStart() {
   document.getElementById('goal-input').value = '';
   stopTick();
   refreshCameraStatus();
+  refreshBackendStatus();
   document.getElementById('goal-input').focus();
 }
 
@@ -115,7 +103,6 @@ async function onStart() {
     type: MSG.START_SESSION,
     goal,
     attentionEnabled: attentionToggle.checked,
-    attentionEngine: selectedEngine(),
   });
   renderActive(session);
 }
@@ -127,6 +114,29 @@ function renderActive(session) {
   updatePill(session);
   renderAttention(session.attention);
   startTick(session);
+  refreshBackendStatus();
+}
+
+// Pages are scored by the backend (semantic similarity) when it is running and
+// by in-browser keyword matching otherwise; say which one is in effect.
+async function refreshBackendStatus() {
+  const dot = document.getElementById('backend-dot');
+  const text = document.getElementById('backend-text');
+  const box = document.getElementById('backend-status');
+
+  let running = false;
+  try {
+    const response = await fetch(API_HEALTH_URL, { signal: AbortSignal.timeout(1500) });
+    running = response.ok && (await response.json()).service === 'anchor-api';
+  } catch {
+    // Not running or unreachable.
+  }
+
+  dot.className = `attention-dot attention-dot--${running ? 'ok' : 'warn'}`;
+  text.textContent = running ? 'Semantic matching' : 'Keyword matching';
+  box.title = running
+    ? 'Connected to the Anchor alignment server'
+    : 'Alignment server not running, so pages are matched by keywords in the browser. Start it with the steps in the README for better accuracy.';
 }
 
 // Camera permission is granted per extension origin from a visible tab
@@ -137,13 +147,7 @@ async function refreshCameraStatus() {
   const grantBtn = document.getElementById('camera-grant-btn');
 
   box.hidden = !attentionToggle.checked;
-  document.getElementById('engine-options').hidden = !attentionToggle.checked;
   if (!attentionToggle.checked) return;
-
-  if (selectedEngine() === 'python') {
-    await refreshServerStatus(box, text, grantBtn);
-    return;
-  }
 
   let state = 'unknown';
   try {
@@ -167,25 +171,6 @@ async function refreshCameraStatus() {
     text.textContent = 'Camera access needed';
     grantBtn.textContent = 'Grant camera access';
   }
-}
-
-// The Python server opens the camera itself, so there is no browser permission
-// to grant; just check that it is running.
-async function refreshServerStatus(box, text, grantBtn) {
-  let running = false;
-  try {
-    const response = await fetch(PYTHON_ENGINE_HEALTH_URL, { signal: AbortSignal.timeout(1500) });
-    running = response.ok && (await response.json()).service === 'anchor-attention';
-  } catch {
-    // Not running or unreachable.
-  }
-
-  box.classList.toggle('option__camera--ok', running);
-  box.classList.toggle('option__camera--bad', !running);
-  grantBtn.hidden = true;
-  text.textContent = running
-    ? 'Python server connected'
-    : 'Python server not running. Start it with the steps in server/README.md';
 }
 
 function openCameraPermissionPage() {
@@ -233,10 +218,9 @@ function renderAttention(attention) {
     label = 'Camera off';
   }
 
-  text.textContent = `Attention${attention.engine === 'python' ? ' (Python)' : ''}: ${label}`;
+  text.textContent = `Attention: ${label}`;
   dot.className = `attention-dot${tone ? ` attention-dot--${tone}` : ''}`;
   grantBtn.hidden = !(
-    attention.engine !== 'python' &&
     attention.status === 'error' &&
     attention.error === 'permission-denied'
   );
@@ -291,11 +275,10 @@ function renderSummary(summary) {
   showView('summary');
   document.getElementById('summary-goal').textContent = summary.goal;
 
-  const { counts, totalPages, avgScore, durationMs } = summary;
+  const { counts, totalPages, durationMs } = summary;
   document.getElementById('summary-stats').innerHTML = `
     <div class="stat"><span class="stat__value">${totalPages}</span><span class="stat__label">Pages</span></div>
     <div class="stat"><span class="stat__value">${formatDuration(durationMs)}</span><span class="stat__label">Duration</span></div>
-    <div class="stat"><span class="stat__value">${avgScore != null ? Math.round(avgScore * 100) + '%' : '—'}</span><span class="stat__label">Avg align</span></div>
     <div class="stat"><span class="stat__value">${counts.HIGH || 0}</span><span class="stat__label">Alerts</span></div>
   `;
 
