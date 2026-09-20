@@ -406,7 +406,11 @@ async function simulateAway() {
   const tabId = await demoTargetTab();
   if (tabId != null) {
     attentionWarningTabId = tabId;
-    sendToTab(tabId, { type: MSG.SHOW_ATTENTION_WARNING, payload: { goal: session.goal } });
+    const large = await browserIsFullscreen();
+    sendToTab(tabId, {
+      type: MSG.SHOW_ATTENTION_WARNING,
+      payload: { goal: session.goal, since: end - SIMULATED_AWAY_MS, large },
+    });
   }
   setTimeout(() => dismissAttentionWarning(SIMULATED_AWAY_MS), SIMULATED_AWAY_MS);
   return true;
@@ -429,6 +433,17 @@ async function warningTabId() {
   return pages.length ? pages[0].id : null;
 }
 
+// On macOS a full-screen window is its own Space, so opening a separate focused
+// window switches away from it (or drops the browser out of full screen). The
+// same goes for a full-screen video. Those cases get an in-page warning instead.
+async function browserIsFullscreen() {
+  try {
+    return (await chrome.windows.getLastFocused()).state === 'fullscreen';
+  } catch {
+    return false;
+  }
+}
+
 // You can't see a banner while you're looking away, so also open a small
 // pop-up window in front of everything. It works whatever tab is active (the
 // popup, a new-tab page, chrome://) and plays a chime.
@@ -437,13 +452,12 @@ async function openAwayWindow(since) {
     clearTimeout(closeAwayTimer); // a leftover "close it" timer must not close this new warning
     if ((await chrome.tabs.query({ url: `${WARNING_PAGE}*` })).length > 0) return; // already showing
 
+    // A full-screen browser gets a big in-page warning instead (see showAttentionWarning).
+    if (await browserIsFullscreen()) return;
+
     // Centre it over the browser window it will appear in front of, if we can tell where that is.
     let position = {};
     const current = await chrome.windows.getLastFocused();
-    // On macOS, a full-screen window is its own Space, and focusing a new window
-    // switches away from it (or drops the browser out of full screen). Leave a
-    // full-screen browser alone: the in-page banner still shows over the page.
-    if (current.state === 'fullscreen') return;
     if (current.state !== 'minimized' && current.left != null && current.width != null) {
       position = {
         left: Math.max(0, Math.round(current.left + (current.width - WARNING_WINDOW.width) / 2)),
@@ -473,7 +487,9 @@ async function showAttentionWarning(goal, since) {
   const tabId = await warningTabId();
   if (tabId == null) return;
   attentionWarningTabId = tabId;
-  sendToTab(tabId, { type: MSG.SHOW_ATTENTION_WARNING, payload: { goal } });
+  // Full screen: no separate window, so make the in-page warning large and loud.
+  const large = await browserIsFullscreen();
+  sendToTab(tabId, { type: MSG.SHOW_ATTENTION_WARNING, payload: { goal, since, large } });
 }
 
 // awayMs = null removes the warning immediately; otherwise it briefly shows a

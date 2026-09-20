@@ -112,7 +112,10 @@
     }
   }
 
-  // Small non-blocking banner shown when the webcam notices the user looking away.
+  // Banner shown when the webcam notices the user looking away. Small and
+  // non-blocking normally; with payload.large (a full-screen browser, where a
+  // separate warning window would pull the user out of full screen) it fills the
+  // page with a pulsing red screen, a running away-timer and a repeating chime.
   function showAttentionWarning(payload) {
     removeAttentionToast();
 
@@ -126,19 +129,32 @@
     shadow.appendChild(style);
 
     const card = document.createElement('div');
-    card.className = 'anchor-toast';
+    card.className = payload.large ? 'anchor-toast anchor-toast--large' : 'anchor-toast';
     card.setAttribute('role', 'status');
     card.innerHTML = `
       <div class="anchor-toast__body">
         <div class="anchor-toast__title">Still with us?</div>
         <div class="anchor-toast__text">Looks like you looked away from the screen. You were working on: <strong>${escapeHtml(payload.goal)}</strong></div>
+        <div class="anchor-toast__timer"></div>
       </div>
-      <button type="button" class="anchor-toast__close">Dismiss</button>
+      <button type="button" class="anchor-toast__close">${payload.large ? 'I am back' : 'Dismiss'}</button>
     `;
     shadow.appendChild(card);
     card.querySelector('.anchor-toast__close').addEventListener('click', removeAttentionToast);
 
-    toast = { host, card, goal: payload.goal, hideTimer: null };
+    toast = { host, card, goal: payload.goal, hideTimer: null, timerId: null, chimeId: null };
+
+    if (payload.large) {
+      const timerEl = card.querySelector('.anchor-toast__timer');
+      const since = payload.since || Date.now();
+      const tick = () => {
+        timerEl.textContent = `Away for ${formatClock(Date.now() - since)}`;
+      };
+      tick();
+      toast.timerId = setInterval(tick, 1000);
+      chime();
+      toast.chimeId = setInterval(chime, 6000); // someone looking away can easily miss one
+    }
   }
 
   // With awayMs, swap to a short "welcome back" state (hiding it the instant the
@@ -151,6 +167,8 @@
       return;
     }
 
+    clearInterval(toast.timerId);
+    clearInterval(toast.chimeId);
     toast.card.classList.add('anchor-toast--back');
     toast.card.querySelector('.anchor-toast__title').textContent = 'Welcome back';
     toast.card.querySelector('.anchor-toast__text').textContent =
@@ -162,8 +180,41 @@
   function removeAttentionToast() {
     if (!toast) return;
     clearTimeout(toast.hideTimer);
+    clearInterval(toast.timerId);
+    clearInterval(toast.chimeId);
     toast.host.remove();
     toast = null;
+  }
+
+  function formatClock(ms) {
+    const total = Math.max(0, Math.round(ms / 1000));
+    return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+  }
+
+  // A soft two-note chime. Best effort: a page may block audio it hasn't been
+  // interacted with, in which case the red screen is the warning.
+  function chime() {
+    try {
+      const context = new AudioContext();
+      const note = (frequency, startAt) => {
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        const start = context.currentTime + startAt;
+        oscillator.frequency.value = frequency;
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(0.35, start + 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.5);
+        oscillator.connect(gain).connect(context.destination);
+        oscillator.start(start);
+        oscillator.stop(start + 0.55);
+      };
+      if (context.state === 'suspended') context.resume();
+      note(660, 0);
+      note(880, 0.3);
+      setTimeout(() => context.close(), 1500);
+    } catch {
+      // No audio available.
+    }
   }
 
   function formatAway(ms) {
@@ -201,6 +252,38 @@
       animation: anchor-toast-in 200ms ease-out;
     }
     .anchor-toast--back { border-left-color: #2fa860; }
+    .anchor-toast__timer { display: none; }
+    .anchor-toast--large {
+      inset: 0;
+      transform: none;
+      width: auto;
+      flex-direction: column;
+      justify-content: center;
+      gap: 28px;
+      text-align: center;
+      background: #b3261e;
+      color: #ffffff;
+      border: none;
+      border-radius: 0;
+      padding: 32px;
+      animation: anchor-away-pulse 2.4s ease-in-out infinite;
+    }
+    .anchor-toast--large.anchor-toast--back { background: #1f7a45; animation: none; }
+    .anchor-toast--large .anchor-toast__body { flex: none; }
+    .anchor-toast--large .anchor-toast__title { font-size: 44px; margin-bottom: 14px; }
+    .anchor-toast--large .anchor-toast__text { font-size: 20px; color: rgba(255, 255, 255, 0.9); }
+    .anchor-toast--large .anchor-toast__timer {
+      display: block;
+      margin-top: 18px;
+      font-size: 28px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    .anchor-toast--large .anchor-toast__close { font-size: 16px; padding: 10px 22px; }
+    @keyframes anchor-away-pulse {
+      0%, 100% { background: #b3261e; }
+      50% { background: #d93a2f; }
+    }
     .anchor-toast__body { flex: 1; min-width: 0; }
     .anchor-toast__title {
       font-size: 14px;
