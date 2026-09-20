@@ -1,7 +1,9 @@
 from fastapi import APIRouter
+
 from app.models.schemas import AnalyzeRequest, AnalyzeResponse
 from app.services.alignment import calculate_alignment
-from app.sessions.manager import add_page_to_session
+from app.sessions.manager import add_page_to_session, get_alignment_scores
+from app.services.drift import detect_drift
 
 # Router for webpage analysis requests
 router = APIRouter()
@@ -10,7 +12,8 @@ router = APIRouter()
 @router.post("/analyze", response_model=AnalyzeResponse)
 def analyze_page(request: AnalyzeRequest):
 
-    # Compare the user's intention with the current webpage
+    # Calculate how closely the current page matches
+    # the user's original intention
     score = calculate_alignment(
         request.intention,
         request.url,
@@ -18,18 +21,38 @@ def analyze_page(request: AnalyzeRequest):
         request.content
     )
 
-    # Add pages to the session so the extension can display a history of analyzed pages
+    # Store the current page and its alignment score
+    # in the user's browsing session
     add_page_to_session(
-    request.session_id,
-    request.intention,
-    request.url,
-    request.title,
-    score
-)
-    
-    # Return the semantic similarity score to the extension
+        request.session_id,
+        request.intention,
+        request.url,
+        request.title,
+        score
+    )
+
+    # Get all alignment scores collected during this session
+    scores = get_alignment_scores(request.session_id)
+
+    # Check whether the recent browsing pattern
+    # suggests sustained drift from the intention
+    drifting = detect_drift(scores)
+
+    # Return a different state depending on whether
+    # drift was detected
+    if drifting:
+        state = "drifting"
+        intervention = True
+        reason = "Recent browsing has moved away from your original intention."
+    else:
+        state = "aligned"
+        intervention = False
+        reason = "No sustained drift detected."
+
     return AnalyzeResponse(
         alignment=score,
-        state="analyzed",
-        reason="Alignment calculated using semantic similarity."
+        state=state,
+        intervention=intervention,
+        reason=reason
     )
+
